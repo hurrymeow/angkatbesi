@@ -521,8 +521,8 @@ function clearRestInterval() {
 function showRestNotification() {
   if (!('Notification' in window) || Notification.permission !== 'granted' || !navigator.serviceWorker) return;
   const ends = new Date(restState.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  navigator.serviceWorker.ready.then((reg) => reg.showNotification('Resting', {
-    body: 'Next set at ' + ends,
+  navigator.serviceWorker.ready.then((reg) => reg.showNotification('Rest · ' + formatMMSS(restState.duration), {
+    body: 'Ends ' + ends,
     tag: 'rest',
     silent: true,
     icon: 'icons/icon-192.png'
