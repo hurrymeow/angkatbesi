@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: JS syntax check
+        run: |
+          for f in app.js health.js sw.js; do node --check "$f"; done
+
+  cache-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require service worker cache bump when assets change
+        run: |
+          base="origin/${{ github.base_ref }}"
+          changed=$(git diff --name-only "$base...HEAD" -- index.html app.js health.js app.css manifest.json icons/)
+          [ -z "$changed" ] && { echo "No cached assets changed."; exit 0; }
+          old=$(git show "$base:sw.js" | grep -m1 "^const CACHE_NAME")
+          new=$(grep -m1 "^const CACHE_NAME" sw.js)
+          if [ "$old" = "$new" ]; then
+            echo "::error::Assets changed but CACHE_NAME in sw.js was not bumped ($new)"
+            echo "$changed"
+            exit 1
+          fi
+          echo "Cache bumped: $old -> $new"
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+      - name: Smoke test
+        run: |
+          python3 -m http.server 8080 >/dev/null 2>&1 &
+          sleep 1
+          node tools/smoke.js http://localhost:8080/
