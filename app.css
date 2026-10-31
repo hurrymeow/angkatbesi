@@ -552,3 +552,64 @@ body.sheet-open { overflow: hidden; }
 .routine-tools { justify-content: center; margin-top: var(--s-4); }
 .routine-tools .btn { display: inline-flex; align-items: center; gap: var(--s-2); }
 .routine-tools .icon { width: 16px; height: 16px; }
+
+/* Pet. Colour is allowed here only; the rest of the app stays Mono Dark. */
+.pet-card {
+  display: flex; align-items: center; gap: var(--s-3); width: 100%;
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+}
+.pet-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.pet-tile {
+  flex: none; width: 84px; height: 84px; border-radius: var(--radius);
+  display: flex; align-items: flex-end; justify-content: center; overflow: hidden;
+  background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--pet) 20%, var(--surface-2)), var(--surface-2) 75%);
+}
+.pet-tile.big { width: 96px; height: 96px; }
+.pet-wrap { transform: scale(var(--scale, 1)); transform-origin: 50% 100%; line-height: 0; }
+.pet-wrap.legend, .pet-evo-art.legend { filter: drop-shadow(0 0 6px var(--pet)); }
+.pet-sprite {
+  --dur: 0.8s;
+  width: var(--size); height: var(--size);
+  background-image: var(--sheet);
+  background-size: calc(var(--size) * 4) calc(var(--size) * 4);
+  background-position: 0 calc(var(--size) * var(--row) * -1);
+  animation: pet-frames var(--dur) steps(4) infinite;
+}
+.pet-sleepy { --dur: 1.6s; }
+.pet-hibernating { --dur: 2.4s; opacity: 0.5; }
+.pet-happy, .pet-celebrate { animation: pet-frames var(--dur) steps(4) infinite, pet-bob 0.8s ease-in-out infinite; }
+@keyframes pet-frames {
+  from { background-position: 0 calc(var(--size) * var(--row) * -1); }
+  to { background-position: calc(var(--size) * -4) calc(var(--size) * var(--row) * -1); }
+}
+@keyframes pet-bob { 50% { transform: translateY(-4px); } }
+.pet-info { flex: 1; min-width: 0; }
+.pet-stage { font-size: var(--text-xs); color: var(--pet); }
+.pet-line { margin: 2px 0 var(--s-2); font-size: var(--text-sm); }
+.pet-bar { height: 6px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
+.pet-bar > span { display: block; height: 100%; background: var(--pet); border-radius: inherit; }
+.pet-next { margin: 4px 0 0; font-size: var(--text-xs); color: var(--text-3); }
+.pet-evolved { display: flex; align-items: center; gap: var(--s-3); }
+
+.pet-playground {
+  position: relative; display: block; width: 100%; height: 180px; padding: 0;
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer;
+  background: radial-gradient(circle at 50% 70%, color-mix(in srgb, var(--pet) 14%, var(--surface-2)), var(--surface-2) 75%);
+}
+.pet-floor { position: absolute; left: 0; right: 0; bottom: 28px; border-top: 1px dashed var(--border-strong); }
+.pet-actor { position: absolute; left: 0; bottom: 12px; transform-origin: 50% 100%; image-rendering: pixelated; }
+.pet-shadow { position: absolute; left: -22px; bottom: 16px; width: 44px; height: 8px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); display: none; }
+.pet-heart { position: absolute; bottom: 110px; color: var(--pet); font-size: 20px; transform: translateX(-50%); pointer-events: none; animation: pet-heart 1s ease-out forwards; }
+@keyframes pet-heart { to { transform: translate(-50%, -50px); opacity: 0; } }
+.pet-evo-row { display: flex; gap: var(--s-2); margin-top: var(--s-2); }
+.pet-evo { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; }
+.pet-evo-art { position: relative; width: 100%; max-width: 56px; aspect-ratio: 1; }
+.pet-thumb { width: 100%; height: 100%; background-size: 400% 400%; background-position: 0 0; }
+.pet-evo.locked .pet-thumb { filter: brightness(0) opacity(0.35); }
+.pet-q { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-weight: 600; }
+.pet-evo-name { font-size: var(--text-xs); }
+.pet-evo-sub { font-size: 11px; }
+@media (prefers-reduced-motion: reduce) {
+  .pet-sprite { animation: none !important; }
+  .pet-heart { animation-duration: 0.01ms !important; opacity: 0.8; }
+}

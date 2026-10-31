@@ -437,6 +437,281 @@ function weekStreak() {
   return n;
 }
 
+// ---------- Pet ----------
+// Everything here is derived from state.history. Nothing is stored.
+const PET_NAME = 'Bebi';
+const PET_FORMS = {
+  baby: { name: 'Baby', color: '#FFD166', sheet: './pet/baby.png', walk: './pet/baby-walk.png' },
+  push: { name: 'Brawler', color: '#FF7A59', sheet: './pet/brawler.png', walk: './pet/brawler-walk.png' },
+  pull: { name: 'Climber', color: '#3EC7C2', sheet: './pet/climber.png', walk: './pet/climber-walk.png' },
+  legs: { name: 'Stomper', color: '#A58BFF', sheet: './pet/stomper.png', walk: './pet/stomper-walk.png' }
+};
+const PET_STAGES = [
+  { name: 'Sleeping', at: 0, scale: 0.7 },
+  { name: 'Hatchling', at: 1, scale: 0.75 },
+  { name: 'Cub', at: 10, scale: 0.9 },
+  { name: 'Junior', at: 25, scale: 0.9 },
+  { name: 'Adult', at: 50, scale: 1 },
+  { name: 'Legend', at: 100, scale: 1 }
+];
+const PET_FORM_AT = 25;
+// Checked in this order, first match wins, so "leg press" is legs and "romanian deadlift" is legs.
+const PET_KEYWORDS = [
+  ['legs', ['squat', 'lunge', 'leg press', 'leg curl', 'leg extension', 'calf', 'rdl', 'romanian', 'hip thrust', 'glute', 'split squat', 'step-up']],
+  ['pull', ['row', 'pull-up', 'pullup', 'chin', 'pulldown', 'curl', 'deadlift', 'face pull', 'shrug', 'rear delt']],
+  ['push', ['bench', 'press', 'dip', 'push-up', 'pushup', 'fly', 'flye', 'triceps', 'tricep', 'skullcrusher', 'lateral raise', 'raise']]
+];
+
+function petStage(n) {
+  let i = 0;
+  PET_STAGES.forEach((s, k) => { if (n >= s.at) i = k; });
+  return { stage: PET_STAGES[i], index: i, next: PET_STAGES[i + 1] || null };
+}
+
+// Completed sets per movement pattern. Newest-first entries; the oldest 25 once there are that many.
+function petSetCounts(entries) {
+  const counts = { push: 0, pull: 0, legs: 0 };
+  const used = entries.length >= PET_FORM_AT ? entries.slice(-PET_FORM_AT) : entries;
+  for (const entry of used) {
+    for (const ex of entry.exercises) {
+      const name = ex.name.toLowerCase();
+      const hit = PET_KEYWORDS.find(([, words]) => words.some(w => name.includes(w)));
+      if (hit) counts[hit[0]] += ex.sets.filter(s => s.completed).length;
+    }
+  }
+  return counts;
+}
+
+// Tie-break: legs, then push, then pull. Nothing matched means push.
+function petLeaning(counts) {
+  let top = 'push';
+  let best = -1;
+  for (const k of ['legs', 'push', 'pull']) {
+    if (counts[k] > best) { best = counts[k]; top = k; }
+  }
+  return best > 0 ? top : 'push';
+}
+
+function petFormOf(entries) {
+  return entries.length < PET_FORM_AT ? 'baby' : petLeaning(petSetCounts(entries));
+}
+
+function petForm() {
+  return petFormOf(state.history);
+}
+
+// Rows: 0 idle, 1 happy, 2 sleepy, 3 celebrate.
+function petMood() {
+  const last = state.history[0];
+  if (!last) return { key: 'sleepy', row: 2, daysAgo: null, line: `Log your first workout to wake ${PET_NAME}.` };
+  const d = daysAgo(last.date);
+  if (d <= 0) {
+    const prs = prsByEntry();
+    if (state.history.some(h => daysAgo(h.date) <= 0 && (prs.get(h.id) || []).length)) {
+      return { key: 'celebrate', row: 3, daysAgo: d, line: `New PB today. ${PET_NAME} is losing it.` };
+    }
+    return { key: 'happy', row: 1, daysAgo: d, line: 'Fed today. Bouncing around.' };
+  }
+  if (d <= 2) return { key: 'content', row: 0, daysAgo: d, line: `Trained ${d} day${d === 1 ? '' : 's'} ago. Happy and resting.` };
+  if (d <= 6) return { key: 'sleepy', row: 2, daysAgo: d, line: `${d} days since your last session. Getting sleepy.` };
+  return { key: 'hibernating', row: 2, daysAgo: d, line: 'Hibernating. Log a workout to wake it up.' };
+}
+
+const PET_FRAME_MS = { celebrate: 220, happy: 200, content: 250, sleepy: 400, hibernating: 600 };
+
+// Static sprite for the card and the finish screen. The sheet is animated by CSS.
+function petSprite(form, row, size, mood) {
+  return `<div class="pet-sprite pet-${mood}" style="--sheet:url(${PET_FORMS[form].sheet});--row:${row};--size:${size}px"></div>`;
+}
+
+function renderPetCard() {
+  const n = state.history.length;
+  const { stage, next } = petStage(n);
+  const form = petForm();
+  const f = PET_FORMS[form];
+  const mood = petMood();
+  const label = n >= PET_FORM_AT ? `${f.name} · ${stage.name}` : stage.name;
+  const pct = next ? Math.round((n - stage.at) / (next.at - stage.at) * 100) : 100;
+  const toNext = next ? `${next.at - n} session${next.at - n === 1 ? '' : 's'} to ${next.name}` : 'Fully evolved';
+  return `
+    <button class="card pet-card" data-action="open-pet" aria-label="Open ${PET_NAME}" style="--pet:${f.color}">
+      <div class="pet-tile">
+        <div class="pet-wrap${stage.name === 'Legend' ? ' legend' : ''}" style="--scale:${stage.scale}">${petSprite(form, mood.row, 84, mood.key)}</div>
+      </div>
+      <div class="pet-info">
+        <div class="row between"><strong>${PET_NAME}</strong><span class="pet-stage">${label}</span></div>
+        <p class="muted pet-line">${escapeHtml(mood.line)}</p>
+        <div class="pet-bar"><span style="width:${pct}%"></span></div>
+        <p class="pet-next">${toNext}</p>
+      </div>
+    </button>`;
+}
+
+function renderPetSheet() {
+  const n = state.history.length;
+  const { stage, next } = petStage(n);
+  const form = petForm();
+  const f = PET_FORMS[form];
+  const mood = petMood();
+  const counts = petSetCounts(state.history);
+  const pct = next ? Math.round((n - stage.at) / (next.at - stage.at) * 100) : 100;
+  const label = n >= PET_FORM_AT ? `${f.name} · ${stage.name}` : stage.name;
+  const formLine = n >= PET_FORM_AT
+    ? `${f.name}, set by your first ${PET_FORM_AT} sessions.`
+    : `Leaning ${PET_FORMS[petLeaning(counts)].name} · push ${counts.push} · pull ${counts.pull} · legs ${counts.legs} sets. Form is set at ${PET_FORM_AT} sessions.`;
+  const last = state.history[0];
+  const thumb = (key, reached, sub, glow) => `
+    <div class="pet-evo${reached ? '' : ' locked'}">
+      <div class="pet-evo-art${glow ? ' legend' : ''}" style="--pet:${PET_FORMS[key].color}">
+        <div class="pet-thumb" style="background-image:url(${PET_FORMS[key].sheet})"></div>
+        ${reached ? '' : '<span class="pet-q">?</span>'}
+      </div>
+      <span class="pet-evo-name">${reached ? (glow ? 'Legend' : PET_FORMS[key].name) : '?'}</span>
+      <span class="muted pet-evo-sub">${sub}</span>
+    </div>`;
+  const chosen = n >= PET_FORM_AT ? form : null;
+  return `
+    <div class="pet-sheet" style="--pet:${f.color}">
+      <button class="pet-playground" data-action="pet-tap" aria-label="Play with ${PET_NAME}">
+        <div class="pet-floor"></div>
+        <div class="pet-shadow"></div>
+        <div class="pet-actor"></div>
+      </button>
+      <div class="row between mt-3"><h2>${PET_NAME}</h2><span class="pet-stage">${label}</span></div>
+      <div class="pet-bar mt-2"><span style="width:${pct}%"></span></div>
+      <p class="pet-next">${next ? `${n} of ${next.at} sessions to ${next.name}` : 'Fully evolved'}</p>
+      <p class="eyebrow mt-3">Mood</p>
+      <p>${escapeHtml(mood.line)}</p>
+      <p class="muted">${last ? `Last trained ${relativeDay(last.date)}` : 'No sessions yet'}</p>
+      <p class="eyebrow mt-3">Form</p>
+      <p>${escapeHtml(formLine)}</p>
+      <p class="eyebrow mt-3">Evolution path</p>
+      <div class="pet-evo-row">
+        ${thumb('baby', true, 'Start')}
+        ${thumb('push', chosen === 'push', `${PET_FORM_AT} sessions`)}
+        ${thumb('pull', chosen === 'pull', `${PET_FORM_AT} sessions`)}
+        ${thumb('legs', chosen === 'legs', `${PET_FORM_AT} sessions`)}
+        ${thumb(chosen || 'baby', n >= 100, '100 sessions', true)}
+      </div>
+    </div>`;
+}
+
+// Playground loop. render() rebuilds #app, so each tick looks the element up again.
+const petPlay = { x: null, tx: null, dir: 1, mode: 'pause', until: 0, tapUntil: 0, last: 0, raf: 0, form: null };
+const PET_ACTOR = 112;
+
+function petReduced() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function petLoopStart() {
+  if (petPlay.raf) return;
+  petPlay.last = performance.now();
+  petPlay.mode = 'pause';
+  petPlay.until = petPlay.last + 800;
+  petPlay.x = null;
+  petPlay.raf = requestAnimationFrame(petTick);
+}
+
+function petTick(now) {
+  const field = document.querySelector('.pet-playground');
+  if (!sheet || sheet.kind !== 'pet' || !field) { petPlay.raf = 0; return; }
+  petPlay.raf = requestAnimationFrame(petTick);
+  const dt = Math.min(0.1, (now - petPlay.last) / 1000);
+  petPlay.last = now;
+  const reduced = petReduced();
+  const form = petForm();
+  const f = PET_FORMS[form];
+  const mood = petMood();
+  const maxX = Math.max(0, field.clientWidth - PET_ACTOR);
+  if (petPlay.x == null) petPlay.x = reduced ? maxX / 2 : Math.random() * maxX;
+  petPlay.x = Math.min(petPlay.x, maxX);
+
+  const tapping = now < petPlay.tapUntil;
+  if (!reduced && !tapping) {
+    if (petPlay.mode === 'walk') {
+      const speed = mood.key === 'hibernating' ? 18 : 44;
+      const step = speed * dt * petPlay.dir;
+      petPlay.x += step;
+      if ((petPlay.dir > 0 && petPlay.x >= petPlay.tx) || (petPlay.dir < 0 && petPlay.x <= petPlay.tx)) {
+        petPlay.x = petPlay.tx;
+        petPlay.mode = 'pause';
+        petPlay.until = now + 1500 + Math.random() * 2500;
+      }
+    } else if (now >= petPlay.until) {
+      petPlay.tx = Math.random() * maxX;
+      petPlay.dir = petPlay.tx >= petPlay.x ? 1 : -1;
+      petPlay.mode = Math.abs(petPlay.tx - petPlay.x) < 8 ? 'pause' : 'walk';
+      petPlay.until = now + 1500;
+    }
+  }
+
+  const walking = !reduced && !tapping && petPlay.mode === 'walk';
+  const actor = field.querySelector('.pet-actor');
+  const shadow = field.querySelector('.pet-shadow');
+  let frame, row, sheetUrl, lift = 0, squash = 1;
+  if (tapping) {
+    row = 3; sheetUrl = f.sheet;
+    frame = reduced ? 0 : Math.floor(now / 220) % 4;
+  } else if (walking) {
+    row = 0; sheetUrl = f.walk;
+    frame = Math.floor(now / 160) % 4;
+    if (form === 'pull') lift = 10;
+    if (form === 'legs') squash = 1 - 0.07 * Math.abs(Math.sin(now / 160 * Math.PI / 2));
+  } else {
+    row = mood.row; sheetUrl = f.sheet;
+    frame = reduced ? 0 : Math.floor(now / PET_FRAME_MS[mood.key]) % 4;
+  }
+  const flip = walking && petPlay.dir < 0 ? -1 : 1;
+  actor.style.width = actor.style.height = PET_ACTOR + 'px';
+  actor.style.backgroundImage = `url(${sheetUrl})`;
+  actor.style.backgroundSize = `${PET_ACTOR * 4}px ${PET_ACTOR * (walking ? 1 : 4)}px`;
+  actor.style.backgroundPosition = `${-frame * PET_ACTOR}px ${walking ? 0 : -row * PET_ACTOR}px`;
+  actor.style.opacity = mood.key === 'hibernating' && !tapping ? 0.5 : 1;
+  actor.style.transform = `translate(${petPlay.x}px, ${-lift}px) scale(${flip}, ${squash})`;
+  shadow.style.transform = `translateX(${petPlay.x + PET_ACTOR / 2}px)`;
+  shadow.style.display = lift ? 'block' : 'none';
+}
+
+function petTap() {
+  const field = document.querySelector('.pet-playground');
+  if (!field) return;
+  petPlay.tapUntil = performance.now() + 1000;
+  if (navigator.vibrate) navigator.vibrate(20);
+  const heart = document.createElement('span');
+  heart.className = 'pet-heart';
+  heart.textContent = '♥';
+  heart.style.left = ((petPlay.x || 0) + PET_ACTOR / 2) + 'px';
+  field.appendChild(heart);
+  setTimeout(() => heart.remove(), 1000);
+}
+
+// Shown on the finish screen when the last session moved the pet to a new stage or form.
+function renderPetEvolution(entry) {
+  if (!state.history.length || state.history[0].id !== entry.id) return '';
+  const n = state.history.length;
+  const before = petStage(n - 1);
+  const after = petStage(n);
+  if (before.index === after.index) return '';
+  const form = petForm();
+  const f = PET_FORMS[form];
+  const formChanged = petFormOf(state.history.slice(1)) !== form;
+  const title = formChanged
+    ? `${PET_NAME} evolved into ${f.name}!`
+    : `${PET_NAME} grew into ${/^[AEIOU]/.test(after.stage.name) ? 'an' : 'a'} ${after.stage.name}!`;
+  const sub = after.next
+    ? `${after.next.at - n} more session${after.next.at - n === 1 ? '' : 's'} to ${after.next.name}.`
+    : 'Fully evolved.';
+  return `
+    <div class="card pet-evolved" style="--pet:${f.color}">
+      <div class="pet-tile big"><div class="pet-wrap${after.stage.name === 'Legend' ? ' legend' : ''}">${petSprite(form, 3, 96, 'celebrate')}</div></div>
+      <div>
+        <strong>${title}</strong>
+        <p class="muted">${sub}</p>
+      </div>
+    </div>`;
+}
+
 // The session after the last one logged, in routine order. Skips sessions with no exercises.
 function nextSession() {
   const sessions = state.routine.sessions.filter(s => s.exercises.length);
@@ -763,6 +1038,7 @@ function renderTrainTab() {
       return `
         <div class="top-bar"><h1>Train</h1><button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button></div>
         ${renderInstallCard()}
+        ${renderPetCard()}
         <div class="empty-state">
           <p>Your sessions have no exercises yet.</p>
           <button class="btn primary mt-3" data-action="go-routine">Add exercises</button>
@@ -771,6 +1047,7 @@ function renderTrainTab() {
     return `
       <div class="top-bar"><h1>Train</h1><button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button></div>
       ${renderInstallCard()}
+      ${renderPetCard()}
       <div class="card hero">
         <p class="eyebrow">Get started</p>
         <h2>Pick a program</h2>
@@ -790,6 +1067,7 @@ function renderTrainTab() {
       <button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button>
     </div>
     ${renderInstallCard()}
+    ${renderPetCard()}
     ${renderWeekCard()}
     ${renderStatTiles()}
     ${renderNextUpCard(next)}
@@ -917,6 +1195,7 @@ function renderFinishSummary() {
       <div class="stat"><span class="stat-value">${formatVolume(entryVolume(entry))}</span><span class="stat-label">${unitLabel()} lifted</span></div>
       <div class="stat"><span class="stat-value">${done}/${total}</span><span class="stat-label">sets done</span></div>
     </div>
+    ${renderPetEvolution(entry)}
     ${renderHealthSummary(entry)}
     <div class="card">
       ${prs.length ? `
@@ -1183,6 +1462,7 @@ function openSheet(next) {
   }
   sheet = next;
   render();
+  if (next.kind === 'pet') petLoopStart();
 }
 
 function closeSheet() {
@@ -1216,6 +1496,7 @@ function renderSheet() {
     case 'import': body = `<h2>Import a routine</h2>${renderImportJsonForm()}`; break;
     case 'exercise': body = renderExerciseSheet(); break;
     case 'ai': body = renderAiSheet(); break;
+    case 'pet': body = renderPetSheet(); break;
   }
   const anim = sheetAnimate ? ' sheet-enter' : '';
   sheetAnimate = false;
@@ -2142,6 +2423,12 @@ document.addEventListener('click', (e) => {
       break;
     case 'update-app':
       window.location.reload();
+      break;
+    case 'open-pet':
+      openSheet({ kind: 'pet' });
+      break;
+    case 'pet-tap':
+      petTap();
       break;
     case 'install-app':
       handleInstall();

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gym-companion-v25';
+const CACHE_NAME = 'gym-companion-v26';
 
 // The app shell — always fetched from the network first so updates show up
 // immediately when online. The cache is only the offline fallback.
@@ -15,7 +15,15 @@ const ALL_ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  './pet/baby.png',
+  './pet/baby-walk.png',
+  './pet/brawler.png',
+  './pet/brawler-walk.png',
+  './pet/climber.png',
+  './pet/climber-walk.png',
+  './pet/stomper.png',
+  './pet/stomper-walk.png'
 ];
 
 self.addEventListener('install', (event) => {
