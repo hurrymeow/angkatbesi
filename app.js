@@ -533,8 +533,15 @@ function renderPetCard() {
   const label = n >= PET_FORM_AT ? `${f.name} · ${stage.name}` : stage.name;
   const pct = next ? Math.round((n - stage.at) / (next.at - stage.at) * 100) : 100;
   const toNext = next ? `${next.at - n} session${next.at - n === 1 ? '' : 's'} to ${next.name}` : 'Fully evolved';
+  let statsLine = '', aria = `Open ${PET_NAME}`;
+  if (n) {
+    const { volume, sessions, prCount } = statNumbers();
+    const sLbl = `session${sessions === 1 ? '' : 's'}`, pLbl = `PR${prCount === 1 ? '' : 's'}`;
+    statsLine = `<p class="pet-stats"><b>${formatVolume(volume)}</b> ${unitLabel()} · <b>${sessions}</b> ${sLbl} · <b${prCount ? ' class="up"' : ''}>${prCount}</b> ${pLbl}</p>`;
+    aria += `. ${formatVolume(volume)} ${unitLabel()} this week, ${sessions} ${sLbl} and ${prCount} ${pLbl} this month.`;
+  }
   return `
-    <button class="card pet-card" data-action="open-pet" aria-label="Open ${PET_NAME}" style="--pet:${f.color}">
+    <button class="card pet-card" data-action="open-pet" aria-label="${aria}" style="--pet:${f.color}">
       <div class="pet-tile">
         <div class="pet-wrap${stage.name === 'Legend' ? ' legend' : ''}" style="--scale:${stage.scale}">${petSprite(form, mood.row, 84, mood.key)}</div>
       </div>
@@ -543,6 +550,7 @@ function renderPetCard() {
         <p class="muted pet-line">${escapeHtml(mood.line)}</p>
         <div class="pet-bar"><span style="width:${pct}%"></span></div>
         <p class="pet-next">${toNext}</p>
+        ${statsLine}
       </div>
     </button>`;
 }
@@ -570,6 +578,17 @@ function renderPetSheet() {
       <span class="muted pet-evo-sub">${sub}</span>
     </div>`;
   const chosen = n >= PET_FORM_AT ? form : null;
+  let trainingBlock = '';
+  if (n) {
+    const { volume, sessions, prCount } = statNumbers();
+    trainingBlock = `
+      <p class="eyebrow mt-3">Training</p>
+      <div class="stat-grid flat">
+        <div class="stat"><span class="stat-value">${formatVolume(volume)}</span><span class="stat-label">${unitLabel()} this week</span></div>
+        <div class="stat"><span class="stat-value">${sessions}</span><span class="stat-label">sessions this month</span></div>
+        <div class="stat"><span class="stat-value ${prCount ? 'up' : ''}">${prCount}</span><span class="stat-label">PRs this month</span></div>
+      </div>`;
+  }
   return `
     <div class="pet-sheet" style="--pet:${f.color}">
       <button class="pet-playground" data-action="pet-tap" aria-label="Play with ${PET_NAME}">
@@ -583,6 +602,7 @@ function renderPetSheet() {
       <p class="eyebrow mt-3">Mood</p>
       <p>${escapeHtml(mood.line)}</p>
       <p class="muted">${last ? `Last trained ${relativeDay(last.date)}` : 'No sessions yet'}</p>
+      ${trainingBlock}
       <p class="eyebrow mt-3">Form</p>
       <p>${escapeHtml(formLine)}</p>
       <p class="eyebrow mt-3">Evolution path</p>
@@ -1069,7 +1089,6 @@ function renderTrainTab() {
     ${renderInstallCard()}
     ${renderPetCard()}
     ${renderWeekCard()}
-    ${renderStatTiles()}
     ${renderNextUpCard(next)}
     ${others.length ? `
       <div class="card">
@@ -1119,8 +1138,7 @@ function renderWeekCard() {
     </div>`;
 }
 
-function renderStatTiles() {
-  if (!state.history.length) return '';
+function statNumbers() {
   const weekStart = startOfWeek(new Date()).getTime();
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
@@ -1131,12 +1149,7 @@ function renderStatTiles() {
     if (t >= weekStart) volume += entryVolume(h);
     if (t >= monthStart) { sessions++; prCount += (prs.get(h.id) || []).length; }
   }
-  return `
-    <div class="stat-grid">
-      <div class="stat"><span class="stat-value">${formatVolume(volume)}</span><span class="stat-label">${unitLabel()} lifted this week</span></div>
-      <div class="stat"><span class="stat-value">${sessions}</span><span class="stat-label">sessions this month</span></div>
-      <div class="stat"><span class="stat-value ${prCount ? 'up' : ''}">${prCount}</span><span class="stat-label">PRs this month</span></div>
-    </div>`;
+  return { volume, sessions, prCount };
 }
 
 function renderNextUpCard(s) {

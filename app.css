@@ -589,6 +589,9 @@ body.sheet-open { overflow: hidden; }
 .pet-bar { height: 6px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
 .pet-bar > span { display: block; height: 100%; background: var(--pet); border-radius: inherit; }
 .pet-next { margin: 4px 0 0; font-size: var(--text-xs); color: var(--text-3); }
+.pet-stats { margin: 6px 0 0; font-size: var(--text-xs); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pet-stats b { font-family: var(--font-mono); color: var(--text); font-weight: 600; }
+.pet-stats b.up { color: var(--success); }
 .pet-evolved { display: flex; align-items: center; gap: var(--s-3); }
 
 .pet-playground {
