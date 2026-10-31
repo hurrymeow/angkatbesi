@@ -8,6 +8,7 @@ Gym logbook PWA. Log sets, build routines, review history. All data stays in the
 - Rest timer that counts to a fixed end time and notifies on finish.
 - Optional AI routine builder. Uses your own Gemini key, called straight from the browser.
 - Optional send of finished workouts to Google Health (`health.js`).
+- An evolving pet on the Train tab that grows with your logged workouts.
 - Backup export and import as JSON.
 - Installable, works offline, shows an update banner when a new version is ready.
 
