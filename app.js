@@ -215,13 +215,15 @@ function defaultState() {
       sessions: []
     },
     history: [],
+    activities: [],
     activeWorkoutDraft: null,
     ui: {
       activeTab: 'train',
       expandedSessionIds: [],
       expandedHistoryIds: [],
       historyViewMode: 'sessions',
-      historyExerciseFilter: ''
+      historyExerciseFilter: '',
+      lastSport: { sport: 'pickleball', intensity: 'casual', minutes: 60 }
     }
   };
 }
@@ -236,6 +238,7 @@ function loadState() {
       ...base,
       ...parsed,
       routine: { ...base.routine, ...(parsed.routine || {}) },
+      activities: Array.isArray(parsed.activities) ? parsed.activities : [],
       ui: { ...base.ui, ...(parsed.ui || {}) }
     };
   } catch (e) {
@@ -428,8 +431,18 @@ function relativeDay(iso) {
 }
 
 // Consecutive weeks with at least one session. This week counts once it has one.
+// Sports count as trained days. Drop activities here to keep the pet and week card lifting-only.
+function trainedEntries() {
+  return [...state.history, ...state.activities];
+}
+
+function lastTrainedDate() {
+  const dates = trainedEntries().map(e => e.date).filter(Boolean);
+  return dates.length ? dates.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b)) : null;
+}
+
 function weekStreak() {
-  const weeks = new Set(state.history.map(h => startOfWeek(new Date(h.date)).getTime()));
+  const weeks = new Set(trainedEntries().map(h => startOfWeek(new Date(h.date)).getTime()));
   const w = startOfWeek(new Date());
   if (!weeks.has(w.getTime())) w.setDate(w.getDate() - 7);
   let n = 0;
@@ -502,9 +515,9 @@ function petForm() {
 
 // Rows: 0 idle, 1 happy, 2 sleepy, 3 celebrate.
 function petMood() {
-  const last = state.history[0];
-  if (!last) return { key: 'sleepy', row: 2, daysAgo: null, line: `Log your first workout to wake ${PET_NAME}.` };
-  const d = daysAgo(last.date);
+  const lastDate = lastTrainedDate();
+  if (!lastDate) return { key: 'sleepy', row: 2, daysAgo: null, line: `Log your first workout to wake ${PET_NAME}.` };
+  const d = daysAgo(lastDate);
   if (d <= 0) {
     const prs = prsByEntry();
     if (state.history.some(h => daysAgo(h.date) <= 0 && (prs.get(h.id) || []).length)) {
@@ -567,7 +580,7 @@ function renderPetSheet() {
   const formLine = n >= PET_FORM_AT
     ? `${f.name}, set by your first ${PET_FORM_AT} sessions.`
     : `Leaning ${PET_FORMS[petLeaning(counts)].name} · push ${counts.push} · pull ${counts.pull} · legs ${counts.legs} sets. Form is set at ${PET_FORM_AT} sessions.`;
-  const last = state.history[0];
+  const last = lastTrainedDate();
   const thumb = (key, reached, sub, glow) => `
     <div class="pet-evo${reached ? '' : ' locked'}">
       <div class="pet-evo-art${glow ? ' legend' : ''}" style="--pet:${PET_FORMS[key].color}">
@@ -601,7 +614,7 @@ function renderPetSheet() {
       <p class="pet-next">${next ? `${n} of ${next.at} sessions to ${next.name}` : 'Fully evolved'}</p>
       <p class="eyebrow mt-3">Mood</p>
       <p>${escapeHtml(mood.line)}</p>
-      <p class="muted">${last ? `Last trained ${relativeDay(last.date)}` : 'No sessions yet'}</p>
+      <p class="muted">${last ? `Last trained ${relativeDay(last)}` : 'No sessions yet'}</p>
       ${trainingBlock}
       <p class="eyebrow mt-3">Form</p>
       <p>${escapeHtml(formLine)}</p>
@@ -1068,6 +1081,7 @@ function renderTrainTab() {
       <div class="top-bar"><h1>Train</h1><button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button></div>
       ${renderInstallCard()}
       ${renderPetCard()}
+      ${renderSportButton()}
       <div class="card hero">
         <p class="eyebrow">Get started</p>
         <h2>Pick a program</h2>
@@ -1105,11 +1119,16 @@ function renderTrainTab() {
           </div>`;
         }).join('')}
       </div>` : ''}
+    ${renderSportButton()}
   `;
 }
 
+function renderSportButton() {
+  return `<button class="btn block mt-3" data-action="open-sport">${icon('plus')} Log a sport</button>`;
+}
+
 function renderWeekCard() {
-  const trained = new Set(state.history.map(h => startOfDay(new Date(h.date)).getTime()));
+  const trained = new Set(trainedEntries().map(h => startOfDay(new Date(h.date)).getTime()));
   const today = startOfDay(new Date()).getTime();
   const day = startOfWeek(new Date());
   let count = 0;
@@ -1123,8 +1142,8 @@ function renderWeekCard() {
     day.setDate(day.getDate() + 1);
   }
   const streak = weekStreak();
-  const last = state.history[0];
-  const sub = last ? `Last trained ${relativeDay(last.date)}` : 'Your first session lights up a day.';
+  const last = lastTrainedDate();
+  const sub = last ? `Last trained ${relativeDay(last)}` : 'Your first session lights up a day.';
   return `
     <div class="card">
       <div class="row between">
@@ -1510,6 +1529,7 @@ function renderSheet() {
     case 'exercise': body = renderExerciseSheet(); break;
     case 'ai': body = renderAiSheet(); break;
     case 'pet': body = renderPetSheet(); break;
+    case 'sport': body = renderSportSheet(); break;
   }
   const anim = sheetAnimate ? ' sheet-enter' : '';
   sheetAnimate = false;
@@ -1561,6 +1581,113 @@ function progressionInput(ex, ids, key, label, placeholder) {
         </div>`;
 }
 
+// ---------- Sports ----------
+const pad2 = (n) => String(n).padStart(2, '0');
+function toLocalInput(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function openSportSheet(entry) {
+  const def = state.ui.lastSport || { sport: 'pickleball', intensity: 'casual', minutes: 60 };
+  const f = entry
+    ? { editId: entry.id, sport: entry.sport, name: entry.sport === 'other' ? entry.name : '', minutes: entry.minutes, intensity: entry.intensity, start: toLocalInput(new Date(entry.startedAt)), startTouched: true }
+    : { editId: null, sport: def.sport, name: '', minutes: def.minutes, intensity: def.intensity, start: toLocalInput(new Date(Date.now() - def.minutes * 60000)), startTouched: false };
+  openSheet({ kind: 'sport', form: f });
+}
+
+function sportDraftEntry(f) {
+  return { sport: f.sport, intensity: f.intensity, minutes: Number(f.minutes) };
+}
+
+function sportKcalLine(f) {
+  const est = Health.estimateActivity(sportDraftEntry(f), state.bodyweight, state.unit);
+  return est ? `~${est.kcal} kcal active` : 'Add bodyweight in Settings to estimate calories';
+}
+
+function renderSportSheet() {
+  const f = sheet.form;
+  const chips = Object.entries(Health.SPORTS).map(([k, v]) =>
+    `<button class="chip${f.sport === k ? ' active' : ''}" data-action="sport-pick" data-sport="${k}">${v.label}</button>`).join('');
+  const seg = (k, label) => `<button class="${f.intensity === k ? 'active' : ''}" data-action="sport-intensity" data-intensity="${k}">${label}</button>`;
+  return `
+    <h2>${f.editId ? 'Edit sport session' : 'Log a sport'}</h2>
+    <div class="chip-row mt-3">${chips}</div>
+    ${f.sport === 'other' ? `<input type="text" class="mt-2" data-field="sport-name" placeholder="Sport name" value="${escapeHtml(f.name)}">` : ''}
+    <div class="row mt-3">
+      <div class="grow">
+        <label class="field-label" for="sport-minutes">Minutes</label>
+        <input type="number" id="sport-minutes" min="1" inputmode="numeric" data-field="sport-minutes" value="${escapeHtml(f.minutes)}">
+      </div>
+      <div class="grow">
+        <label class="field-label">Intensity</label>
+        <div class="tabs-toggle">${seg('casual', 'Casual')}${seg('match', 'Match')}</div>
+      </div>
+    </div>
+    <label class="field-label mt-3" for="sport-start">Start</label>
+    <input type="datetime-local" id="sport-start" data-field="sport-start" value="${escapeHtml(f.start)}">
+    <p class="muted mt-3" id="sport-kcal">${sportKcalLine(f)}</p>
+    <div class="row between mt-4">
+      <button class="btn ghost" data-action="close-sheet">Cancel</button>
+      <button class="btn primary" data-action="sport-save">Save</button>
+    </div>
+  `;
+}
+
+function saveSport() {
+  const f = sheet.form;
+  const minutes = Math.round(Number(f.minutes));
+  const start = new Date(f.start);
+  if (!(minutes > 0) || isNaN(start)) { showToast('Add minutes and a start time.'); return; }
+  const name = f.sport === 'other' ? (f.name.trim() || 'Other') : Health.SPORTS[f.sport].label;
+  const fields = {
+    sport: f.sport, name, minutes, intensity: f.intensity,
+    startedAt: start.toISOString(),
+    date: new Date(start.getTime() + minutes * 60000).toISOString()
+  };
+  let entry;
+  if (f.editId) {
+    entry = state.activities.find(a => a.id === f.editId);
+    if (!entry) return;
+    if (entry.gh?.name && Health.isConnected()) Health.queueDelete(entry.gh.name);
+    Object.assign(entry, fields);
+    if (Health.isConnected()) entry.gh = { state: 'pending' }; else delete entry.gh;
+  } else {
+    entry = { id: uid(), ...fields };
+    if (Health.isConnected()) entry.gh = { state: 'pending' };
+    state.activities.unshift(entry);
+  }
+  state.activities.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+  state.ui.lastSport = { sport: f.sport, intensity: f.intensity, minutes };
+  saveState();
+  closeSheet();
+  showToast('Sport session saved.');
+  if (Health.isConnected()) sendToHealth({ interactive: true });
+}
+
+function renderSportCard(entry) {
+  const expanded = state.ui.expandedHistoryIds.includes(entry.id);
+  const est = Health.estimateActivity(entry, state.bodyweight, state.unit);
+  return `
+    <div class="card">
+      <button class="disclosure" data-action="toggle-history-expand" data-entry-id="${entry.id}" aria-expanded="${expanded}">
+        <span class="disclosure-text">
+          <h3>${escapeHtml(entry.name)}</h3>
+          <span class="muted">${formatDate(entry.date)}</span>
+          <span class="muted mono">${entry.minutes} min · ${entry.intensity === 'match' ? 'Match' : 'Casual'}${est ? ` · ~${est.kcal} kcal` : ''}</span>
+        </span>
+        ${icon('chevDown')}
+      </button>
+      ${expanded ? `
+        <div class="history-detail">
+          ${renderHealthEntryStatus(entry)}
+          <div class="row between mt-3">
+            <button class="btn small ghost" data-action="edit-activity" data-entry-id="${entry.id}">Edit</button>
+            <button class="btn small ghost danger-text" data-action="delete-activity" data-entry-id="${entry.id}">${icon('trash')} Delete entry</button>
+          </div>
+        </div>` : ''}
+    </div>`;
+}
+
 function renderExerciseSheet() {
   const s = findSession(sheet.sessionId);
   const ex = s && s.exercises.find(x => x.id === sheet.exerciseId);
@@ -1607,7 +1734,7 @@ function renderHistoryTab() {
     </div>
   `;
 
-  if (state.history.length === 0) {
+  if (state.history.length === 0 && state.activities.length === 0) {
     return `<div class="top-bar"><h1>History</h1><button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button></div>${toggle}<div class="empty-state"><p>No sessions logged yet.</p><p>Finish a workout from the Train tab and it'll show up here.</p></div>`;
   }
 
@@ -1654,7 +1781,8 @@ function renderHistoryTab() {
   return `
     <div class="top-bar"><h1>History</h1><button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button></div>
     ${toggle}
-    ${state.history.map(entry => {
+    ${[...state.history, ...state.activities].sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).map(entry => {
+      if (entry.sport) return renderSportCard(entry);
       const expanded = state.ui.expandedHistoryIds.includes(entry.id);
       const prCount = (prs.get(entry.id) || []).length;
       const { done } = entrySetCounts(entry);
@@ -2251,7 +2379,12 @@ function renderAiSheet() {
 
 let healthStatus = {}; // { busy, needsSignIn, error } for the latest send
 
+function healthEntries() {
+  return [...state.history, ...state.activities];
+}
+
 function entryEstimate(entry) {
+  if (entry.sport) return Health.estimateActivity(entry, state.bodyweight, state.unit);
   return Health.estimate(entry, state.bodyweight, state.unit);
 }
 
@@ -2270,7 +2403,7 @@ async function sendToHealth({ interactive = false } = {}) {
       if (!interactive) { healthStatus = { needsSignIn: true }; return; }
       await Health.getToken();
     }
-    healthStatus = await Health.sync({ entries: state.history, weight: state.bodyweight, unit: state.unit, save: saveState });
+    healthStatus = await Health.sync({ entries: healthEntries(), weight: state.bodyweight, unit: state.unit, save: saveState });
   } catch (e) {
     healthStatus = { needsSignIn: true, error: e.message };
   } finally {
@@ -2293,7 +2426,7 @@ async function connectHealth() {
 let healthCheck = null; // { entryId, text } from the latest "Check in Google Health"
 
 async function checkInHealth(entryId) {
-  const entry = state.history.find(h => h.id === entryId);
+  const entry = healthEntries().find(h => h.id === entryId);
   if (!entry) return;
   healthCheck = { entryId, text: 'Asking Google…' };
   render();
@@ -2353,8 +2486,8 @@ function renderHealthEntryStatus(entry) {
 
 function renderHealthSettings() {
   const connected = Health.isConnected();
-  const unsent = connected ? Health.unsent(state.history).length : 0;
-  const waiting = connected ? Health.waitingCount(state.history) : 0;
+  const unsent = connected ? Health.unsent(healthEntries()).length : 0;
+  const waiting = connected ? Health.waitingCount(healthEntries()) : 0;
   if (!connected) return `
     <div class="set-row"><span>Google Health <span class="muted block">Logs workouts with calories</span></span>
       <button class="btn small" data-action="health-connect">Connect</button></div>`;
@@ -2654,6 +2787,38 @@ document.addEventListener('click', (e) => {
       render();
       break;
     }
+    case 'open-sport':
+      openSportSheet();
+      break;
+    case 'edit-activity': {
+      const a = state.activities.find(x => x.id === target.dataset.entryId);
+      if (a) openSportSheet(a);
+      break;
+    }
+    case 'delete-activity': {
+      const entryId = target.dataset.entryId;
+      if (!confirm('Delete this sport session?')) break;
+      const gone = state.activities.find(a => a.id === entryId);
+      state.activities = state.activities.filter(a => a.id !== entryId);
+      saveState();
+      if (gone?.gh?.name && Health.isConnected()) {
+        Health.queueDelete(gone.gh.name);
+        sendToHealth({ interactive: true });
+      }
+      render();
+      break;
+    }
+    case 'sport-pick':
+      sheet.form.sport = target.dataset.sport;
+      render();
+      break;
+    case 'sport-intensity':
+      sheet.form.intensity = target.dataset.intensity;
+      render();
+      break;
+    case 'sport-save':
+      saveSport();
+      break;
     case 'history-view': {
       state.ui.historyViewMode = target.dataset.mode;
       saveState();
@@ -2676,7 +2841,7 @@ document.addEventListener('click', (e) => {
       checkInHealth(target.dataset.entryId);
       break;
     case 'health-resend': {
-      const entry = state.history.find(h => h.id === target.dataset.entryId);
+      const entry = healthEntries().find(h => h.id === target.dataset.entryId);
       if (!entry) break;
       entry.gh = { state: 'pending' };
       healthCheck = null;
@@ -2685,7 +2850,7 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'health-send-past': {
-      const list = Health.unsent(state.history);
+      const list = Health.unsent(healthEntries());
       if (!list.length) { showToast('Nothing to send.'); break; }
       list.forEach(h => { h.gh = { state: 'pending' }; });
       saveState();
@@ -2765,6 +2930,26 @@ document.addEventListener('input', (e) => {
   const sessionId = e.target.dataset.sessionId;
   const exerciseId = e.target.dataset.exerciseId;
   const setIndex = e.target.dataset.setIndex != null ? Number(e.target.dataset.setIndex) : null;
+
+  if (field.startsWith('sport-')) {
+    const f = sheet && sheet.form;
+    if (!f) return;
+    if (field === 'sport-name') f.name = e.target.value;
+    if (field === 'sport-start') { f.start = e.target.value; f.startTouched = true; }
+    if (field === 'sport-minutes') {
+      f.minutes = e.target.value;
+      const m = Number(f.minutes);
+      // Until the start is edited by hand, keep it at "now minus minutes".
+      if (!f.startTouched && m > 0) {
+        f.start = toLocalInput(new Date(Date.now() - m * 60000));
+        const st = document.getElementById('sport-start');
+        if (st) st.value = f.start;
+      }
+    }
+    const k = document.getElementById('sport-kcal');
+    if (k) k.textContent = sportKcalLine(f);
+    return;
+  }
 
   switch (field) {
     case 'routine-name':
@@ -2892,7 +3077,7 @@ render();
 // Connected phones load Google sign-in early, so Finish can open its popup at once.
 if (Health.isConnected()) {
   Health.preload().catch(() => {});
-  if (Health.validToken() && Health.waitingCount(state.history)) sendToHealth();
+  if (Health.validToken() && Health.waitingCount(healthEntries())) sendToHealth();
 }
 
 // ---------- Updates ----------

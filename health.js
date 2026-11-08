@@ -43,6 +43,44 @@ const Health = (() => {
     return { kcal: Math.round((met - 1) * kg * minutes / 60), met: Math.round(met * 10) / 10, minutes: Math.round(minutes) };
   }
 
+  // ---------- Sports ----------
+  // MET pairs are [casual, match]. Pickleball and padel have no Compendium row, so both use
+  // tennis doubles (15685 casual, 15680 match). Basis: docs/plans/log-sports.md.
+  // exerciseType values are unverified against the v4 enum. Pickleball and padel map to TENNIS.
+  const SPORTS = {
+    pickleball: { label: 'Pickleball', casual: 4.5, match: 6.0, exerciseType: 'TENNIS' },
+    padel: { label: 'Padel', casual: 4.5, match: 6.0, exerciseType: 'TENNIS' },
+    tennis: { label: 'Tennis', casual: 6.8, match: 8.0, exerciseType: 'TENNIS' },
+    badminton: { label: 'Badminton', casual: 5.5, match: 7.0, exerciseType: 'BADMINTON' },
+    other: { label: 'Other', casual: 4.5, match: 6.0, exerciseType: 'OTHER_WORKOUT' }
+  };
+
+  // Active kcal = (MET - 1) x kg x hours. Same basis as estimate().
+  function estimateActivity(entry, weight, unit) {
+    const kg = bodyweightKg(weight, unit);
+    const sp = SPORTS[entry.sport];
+    const minutes = Number(entry.minutes);
+    if (!kg || !sp || !(minutes > 0)) return null;
+    const met = entry.intensity === 'match' ? sp.match : sp.casual;
+    return { kcal: Math.round((met - 1) * kg * minutes / 60), met, minutes: Math.round(minutes) };
+  }
+
+  function activityDataPoint(entry, weight, unit) {
+    const sp = SPORTS[entry.sport] || SPORTS.other;
+    const start = new Date(entry.startedAt);
+    const end = new Date(Math.max(Date.parse(entry.date), start.getTime() + 60000));
+    const est = estimateActivity(entry, weight, unit);
+    const exercise = {
+      exerciseType: sp.exerciseType,
+      displayName: entry.name || sp.label,
+      interval: { startTime: start.toISOString(), endTime: end.toISOString(), startUtcOffset: utcOffset(start), endUtcOffset: utcOffset(end) },
+      metricsSummary: est ? { caloriesKcal: est.kcal } : {},
+      notes: `${entry.name || sp.label} · ${entry.intensity} · ${Math.round(entry.minutes)} min`
+    };
+    if (est) exercise.activeDuration = `${est.minutes * 60}s`;
+    return { exercise, dataSource: { recordingMethod: 'MANUAL' } };
+  }
+
   // ---------- Mapping ----------
   const utcOffset = (d) => `${-d.getTimezoneOffset() * 60}s`;
 
@@ -53,6 +91,7 @@ const Health = (() => {
   }
 
   function toDataPoint(entry, weight, unit) {
+    if (entry.sport) return activityDataPoint(entry, weight, unit);
     const start = new Date(entry.startedAt || entry.date);
     const end = new Date(Math.max(Date.parse(entry.date), start.getTime() + 60000));
     const est = estimate(entry, weight, unit);
@@ -228,5 +267,5 @@ const Health = (() => {
     return data.dataPoints || [];
   }
 
-  return { estimate, toDataPoint, isConnected, check, validToken, unsent, waitingCount, queueDelete, preload, getToken, disconnect, sync };
+  return { SPORTS, estimate, estimateActivity, toDataPoint, isConnected, check, validToken, unsent, waitingCount, queueDelete, preload, getToken, disconnect, sync };
 })();
