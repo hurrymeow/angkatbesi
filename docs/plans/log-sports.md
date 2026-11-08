@@ -10,7 +10,7 @@ Log pickleball, padel and other sports in Beban Book, so it is the only tracker.
 
 - **Option A: a separate `state.activities` array.** Every `state.history` loop (37 references) assumes exercises and sets. A separate list means volume, PRs, pet form and By Exercise need no guards. Rejected B (`kind` flag inside `history`): one missed guard breaks stats. Rejected C (read from Google Health): needs a new read scope and a watch on court.
 - **Generic sport picker, pickleball first.** Hari also plays padel.
-- **Pet: counts for "last trained" only.** It updates the pet mood (sleepy/idle), the "Last trained" lines and the week dots and week streak. It does not count toward session count, evolution, push/pull/legs form, volume or PRs. This is the reading of "yes last trained". See open question 1.
+- **Pet: counts for "last trained" only.** It updates the pet mood (sleepy/idle), the "Last trained" lines and the week dots and week streak. It does not count toward session count, evolution, push/pull/legs form, volume or PRs. Hari confirmed week dots and streak count (2026-11-08).
 - **Active kcal = (MET − 1) × kg × hours.** Same formula and bodyweight as `Health.estimate`. Resting burn stays out because Google counts it separately. No bodyweight means no kcal, same as today.
 - **Two intensity tiers per sport: Casual and Match.** Enough for a rough number. A fixed MET can miss by 30% or more, and the lifting estimate is already that rough.
 - **No storage migration needed.** `clearAllData()` resets to `defaultState()`, so it clears activities too. `loadState()` and import spread over `defaultState()`, so old data gets `activities: []`. Backup export already dumps the whole state.
@@ -89,5 +89,4 @@ Sources: [Compendium sports](https://pacompendium.com/sports/) · [ACE picklebal
 
 ## Open questions
 
-1. **Week dots and streak.** The plan counts sports for the week dots and streak, since they read as "days trained". If Hari meant the pet mood only, drop those two from task 4.
-2. **Google Health exercise types.** Check the v4 `exerciseType` enum for pickleball, padel, tennis and badminton values. Use the closest racquet type, or `OTHER`, where one is missing. Report which mapping was used.
+1. **Google Health exercise types.** Check the v4 `exerciseType` enum for pickleball, padel, tennis and badminton values. Use the closest racquet type, or `OTHER`, where one is missing. Report which mapping was used.
