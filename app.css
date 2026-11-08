@@ -149,7 +149,7 @@ button { font-family: inherit; cursor: pointer; }
 .icon-btn.sm { min-height: 20px; min-width: 40px; }
 
 /* Inputs */
-input[type="text"], input[type="number"], input[type="password"], select, textarea {
+input[type="text"], input[type="number"], input[type="password"], input[type="datetime-local"], select, textarea {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -616,3 +616,9 @@ body.sheet-open { overflow: hidden; }
   .pet-sprite { animation: none !important; }
   .pet-heart { animation-duration: 0.01ms !important; opacity: 0.8; }
 }
+
+/* Sports */
+.chip-row { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; color: var(--text-2); font: inherit; min-height: 36px; padding: 0 var(--s-3); cursor: pointer; }
+.chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+input[type="datetime-local"] { font-family: var(--font-mono); color-scheme: dark; }
