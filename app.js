@@ -209,6 +209,7 @@ function defaultState() {
     version: 1,
     unit: 'kg',
     restSeconds: 90,
+    petInRest: true,
     bodyweight: '',
     routine: {
       name: 'My Routine',
@@ -258,7 +259,7 @@ if (state.activeWorkoutDraft) state.ui.activeTab = 'train';
 
 // Rest timer lives outside persisted state — it doesn't need to survive a reload.
 // Counts down to a fixed end time so it stays correct when the phone throttles a hidden tab.
-let restState = { running: false, remaining: 0, duration: Number(state.restSeconds) || 90, endsAt: 0 };
+let restState = { running: false, remaining: 0, duration: Number(state.restSeconds) || 90, endsAt: 0, pb: false };
 let restIntervalHandle = null;
 
 function uid() {
@@ -357,6 +358,20 @@ function progressionFor(ex) {
   const used = prev.filter(s => isNum(s.weight) && Number(s.weight) > 0).map(s => Number(s.weight));
   const last = used.length ? Math.max(...used) : null;
   return { weights, last, next: last == null ? null : roundWeight(last + inc), up: inc > 0 && last != null };
+}
+
+// Best completed weight for an exercise name across history, or null if none.
+function bestDoneWeight(name) {
+  const key = String(name).trim().toLowerCase();
+  let best = null;
+  for (const h of state.history) {
+    for (const ex of h.exercises) {
+      if (ex.name.trim().toLowerCase() !== key) continue;
+      const t = topWeight(ex.sets);
+      if (t != null && (best == null || t > best)) best = t;
+    }
+  }
+  return best;
 }
 
 function entryVolume(entry) {
@@ -737,7 +752,6 @@ function renderPetEvolution(entry) {
     : 'Fully evolved.';
   return `
     <div class="card pet-evolved" style="--pet:${f.color}">
-      <div class="pet-tile big"><div class="pet-wrap${after.stage.name === 'Legend' ? ' legend' : ''}">${petSprite(form, 3, 96, 'celebrate')}</div></div>
       <div>
         <strong>${title}</strong>
         <p class="muted">${sub}</p>
@@ -863,7 +877,7 @@ function tickRestTimer() {
 function startRestTimer() {
   clearRestInterval();
   const duration = Number(state.restSeconds) || 90;
-  restState = { running: true, remaining: duration, duration, endsAt: Date.now() + duration * 1000 };
+  restState = { running: true, remaining: duration, duration, endsAt: Date.now() + duration * 1000, pb: false };
   restIntervalHandle = setInterval(tickRestTimer, 1000);
   // Called from a tap, so the permission prompt is allowed here.
   if ('Notification' in window && Notification.permission === 'default') {
@@ -893,7 +907,7 @@ function skipRestTimer() {
 function stopRestTimerSilently() {
   clearRestInterval();
   if (restState.running) closeRestNotification();
-  restState = { running: false, remaining: 0, duration: Number(state.restSeconds) || 90, endsAt: 0 };
+  restState = { running: false, remaining: 0, duration: Number(state.restSeconds) || 90, endsAt: 0, pb: false };
 }
 
 // Catch up straight away when the app comes back to the foreground.
@@ -908,13 +922,19 @@ function updateRestBannerDom() {
   barEl.style.width = pct + '%';
 }
 
+function restPet() {
+  const form = petForm();
+  const pet = restState.pb ? petSprite(form, 3, 40, 'celebrate') : petSprite(form, 2, 40, 'sleepy').replace('pet-sprite', 'pet-sprite still');
+  return `<span class="rest-pet" style="--pet:${PET_FORMS[form].color}" aria-hidden="true">${pet}</span>`;
+}
+
 function renderRestBanner() {
   if (!restState.running) return '';
   const pct = restState.duration ? Math.max(0, Math.min(100, (restState.remaining / restState.duration) * 100)) : 0;
   return `
     <div class="rest-banner" id="rest-banner">
       <div class="row between">
-        <span>Rest</span>
+        <span class="rest-label">${state.petInRest ? restPet() : ''}Rest</span>
         <span id="rest-remaining" class="rest-remaining-text">${formatMMSS(restState.remaining)}</span>
       </div>
       <div class="rest-progress-track"><div class="rest-progress-fill" id="rest-progress-bar" style="width:${pct}%"></div></div>
@@ -1209,6 +1229,17 @@ function renderNextUpCard(s) {
     </div>`;
 }
 
+// Hero for the finish screen. Celebrates on a PB or an evolution, else happy.
+function renderFinishPet(entry, prs, evolved) {
+  const form = petForm();
+  const { stage } = petStage(state.history.length);
+  const celebrate = prs.length > 0 || evolved;
+  return `
+    <div class="pet-tile hero" style="--pet:${PET_FORMS[form].color}">
+      <div class="pet-wrap${stage.name === 'Legend' ? ' legend' : ''}" style="--scale:${stage.scale}">${petSprite(form, celebrate ? 3 : 1, 96, celebrate ? 'celebrate' : 'happy')}</div>
+    </div>`;
+}
+
 function renderFinishSummary() {
   const entry = state.history.find(h => h.id === finishSummary.entryId);
   if (!entry) { finishSummary = null; return renderTrainTab(); }
@@ -1216,18 +1247,20 @@ function renderFinishSummary() {
   const { done, total } = entrySetCounts(entry);
   const duration = entry.startedAt ? formatDuration(new Date(entry.date) - new Date(entry.startedAt)) : '—';
   const next = nextSession();
+  const evolved = renderPetEvolution(entry);
   return `
     <div class="summary">
-      <div class="summary-badge">${icon('check')}</div>
+      ${renderFinishPet(entry, prs, !!evolved)}
       <h1>${escapeHtml(entry.sessionName)} done</h1>
       <p class="muted">${formatDate(entry.date)}</p>
+      <p class="muted">${PET_NAME} ate ${formatVolume(entryVolume(entry))} ${unitLabel()}.</p>
     </div>
     <div class="stat-grid">
       <div class="stat"><span class="stat-value">${duration}</span><span class="stat-label">duration</span></div>
       <div class="stat"><span class="stat-value">${formatVolume(entryVolume(entry))}</span><span class="stat-label">${unitLabel()} lifted</span></div>
       <div class="stat"><span class="stat-value">${done}/${total}</span><span class="stat-label">sets done</span></div>
     </div>
-    ${renderPetEvolution(entry)}
+    ${evolved}
     ${renderHealthSummary(entry)}
     <div class="card">
       ${prs.length ? `
@@ -1825,6 +1858,8 @@ function renderSettingsTab() {
         <input type="text" data-field="unit" value="${escapeHtml(state.unit)}" maxlength="6"></label>
       <label class="set-row"><span>Rest timer <span class="muted">sec</span></span>
         <input type="number" min="0" step="5" data-field="rest-seconds" value="${escapeHtml(state.restSeconds)}"></label>
+      <label class="set-row"><span>Show ${PET_NAME} during rest</span>
+        <input type="checkbox" class="set-check" data-field="pet-in-rest"${state.petInRest ? ' checked' : ''}></label>
       <label class="set-row"><span>Bodyweight <span class="muted">${unitLabel()}</span></span>
         <input type="number" inputmode="decimal" min="0" step="0.1" data-field="bodyweight" value="${escapeHtml(state.bodyweight)}" placeholder="–"></label>
     </div>
@@ -2620,7 +2655,12 @@ document.addEventListener('click', (e) => {
       const nowDone = ex.sets[setIndex].done;
       if (nowDone) justChecked = exerciseId + ':' + setIndex;
       saveState();
-      if (nowDone) startRestTimer();
+      if (nowDone) {
+        startRestTimer();
+        const w = Number(ex.sets[setIndex].weight);
+        const prev = bestDoneWeight(ex.name);
+        if (w > 0 && prev != null && w > prev) restState.pb = true;
+      }
       render();
       break;
     }
@@ -3016,6 +3056,10 @@ document.addEventListener('input', (e) => {
     }
     case 'unit':
       state.unit = e.target.value;
+      saveState();
+      break;
+    case 'pet-in-rest':
+      state.petInRest = e.target.checked;
       saveState();
       break;
     case 'rest-seconds':
