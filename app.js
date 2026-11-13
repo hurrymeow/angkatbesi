@@ -1606,6 +1606,7 @@ function renderSheet() {
     case 'ai': body = renderAiSheet(); break;
     case 'pet': body = renderPetSheet(); break;
     case 'sport': body = renderSportSheet(); break;
+    case 'edit-entry': body = renderEditEntrySheet(); break;
   }
   const anim = sheetAnimate ? ' sheet-enter' : '';
   sheetAnimate = false;
@@ -1738,6 +1739,64 @@ function saveSport() {
   closeSheet();
   showToast('Sport session saved.');
   if (Health.isConnected()) sendToHealth({ interactive: true });
+}
+
+// ---------- Edit a past workout ----------
+function openEditEntry(entry) {
+  const draft = entry.exercises.map(ex => ({
+    exerciseId: ex.exerciseId,
+    name: ex.name,
+    sets: ex.sets.map(s => ({ reps: s.reps ?? '', weight: s.weight ?? '', completed: !!s.completed }))
+  }));
+  openSheet({ kind: 'edit-entry', entryId: entry.id, draft });
+}
+
+function renderEditEntrySheet() {
+  const entry = state.history.find(h => h.id === sheet.entryId);
+  if (!entry) return '';
+  const noGhCopy = entry.gh?.state === 'done' && !entry.gh.name;
+  return `
+    <h2>Edit ${escapeHtml(entry.sessionName)}</h2>
+    <p class="muted">${formatDate(entry.date)}</p>
+    ${noGhCopy ? '<p class="muted mt-2">The Google Health copy won\'t update.</p>' : ''}
+    ${sheet.draft.map((ex, ei) => `
+      <h3 class="mt-3">${escapeHtml(ex.name)}</h3>
+      ${ex.sets.map((s, si) => `
+        <div class="row mt-2">
+          <span class="set-num" style="width:24px">${si + 1}</span>
+          <input type="number" class="grow" min="0" inputmode="numeric" placeholder="Reps" aria-label="Reps, set ${si + 1}" data-field="edit-reps" data-ei="${ei}" data-si="${si}" value="${escapeHtml(s.reps)}">
+          <input type="number" class="grow" min="0" step="0.5" inputmode="decimal" placeholder="${unitLabel()}" aria-label="Weight, set ${si + 1}" data-field="edit-weight" data-ei="${ei}" data-si="${si}" value="${escapeHtml(s.weight)}">
+          <input type="checkbox" class="set-check" aria-label="Done, set ${si + 1}" data-field="edit-done" data-ei="${ei}" data-si="${si}" ${s.completed ? 'checked' : ''}>
+          <button class="icon-btn" data-action="edit-del-set" data-ei="${ei}" data-si="${si}" aria-label="Remove set ${si + 1}">${icon('trash')}</button>
+        </div>
+      `).join('')}
+      <button class="btn small ghost mt-2" data-action="edit-add-set" data-ei="${ei}">${icon('plus')} Add set</button>
+    `).join('')}
+    <div class="row between mt-4">
+      <button class="btn ghost" data-action="close-sheet">Cancel</button>
+      <button class="btn primary" data-action="edit-save">Save</button>
+    </div>
+  `;
+}
+
+function saveEditEntry() {
+  const entry = state.history.find(h => h.id === sheet.entryId);
+  if (!entry) { closeSheet(); return; }
+  const num = (v) => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
+  entry.exercises = sheet.draft.map(ex => ({
+    exerciseId: ex.exerciseId,
+    name: ex.name,
+    sets: ex.sets.map(s => ({ reps: num(s.reps), weight: num(s.weight), completed: !!s.completed }))
+  }));
+  const resend = entry.gh?.state === 'done' && entry.gh.name && Health.isConnected();
+  if (resend) {
+    Health.queueDelete(entry.gh.name);
+    entry.gh = { state: 'pending' };
+  }
+  saveState();
+  closeSheet();
+  showToast('Workout updated.');
+  if (resend) sendToHealth({ interactive: true });
 }
 
 function renderSportCard(entry) {
@@ -1879,6 +1938,7 @@ function renderHistoryTab() {
             `).join('')}
             ${renderHealthEntryStatus(entry)}
             <div class="row mt-3">
+              <button class="btn small ghost" data-action="edit-history-entry" data-entry-id="${entry.id}">Edit</button>
               <button class="btn small ghost danger-text" data-action="delete-history-entry" data-entry-id="${entry.id}">${icon('trash')} Delete entry</button>
             </div>
           </div>
@@ -2875,6 +2935,24 @@ document.addEventListener('click', (e) => {
       render();
       break;
     }
+    case 'edit-history-entry': {
+      const h = state.history.find(x => x.id === target.dataset.entryId);
+      if (h) openEditEntry(h);
+      break;
+    }
+    case 'edit-add-set': {
+      const ex = sheet && sheet.draft[Number(target.dataset.ei)];
+      if (ex) { const last = ex.sets[ex.sets.length - 1]; ex.sets.push({ reps: last ? last.reps : '', weight: last ? last.weight : '', completed: true }); render(); }
+      break;
+    }
+    case 'edit-del-set': {
+      const ex = sheet && sheet.draft[Number(target.dataset.ei)];
+      if (ex) { ex.sets.splice(Number(target.dataset.si), 1); render(); }
+      break;
+    }
+    case 'edit-save':
+      if (sheet && sheet.kind === 'edit-entry') saveEditEntry();
+      break;
     case 'open-sport':
       openSportSheet();
       break;
@@ -3023,6 +3101,15 @@ document.addEventListener('input', (e) => {
   const sessionId = e.target.dataset.sessionId;
   const exerciseId = e.target.dataset.exerciseId;
   const setIndex = e.target.dataset.setIndex != null ? Number(e.target.dataset.setIndex) : null;
+
+  if (field.startsWith('edit-')) {
+    const st = sheet && sheet.kind === 'edit-entry' && sheet.draft[Number(e.target.dataset.ei)]?.sets[Number(e.target.dataset.si)];
+    if (!st) return;
+    if (field === 'edit-reps') st.reps = e.target.value;
+    if (field === 'edit-weight') st.weight = e.target.value;
+    if (field === 'edit-done') st.completed = e.target.checked;
+    return;
+  }
 
   if (field.startsWith('sport-')) {
     const f = sheet && sheet.form;
