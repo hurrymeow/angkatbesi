@@ -218,12 +218,14 @@ function defaultState() {
     history: [],
     activities: [],
     activeWorkoutDraft: null,
+    lastExportAt: null,
     ui: {
       activeTab: 'train',
       expandedSessionIds: [],
       expandedHistoryIds: [],
       historyViewMode: 'sessions',
       historyExerciseFilter: '',
+      backupSnoozeUntil: null,
       lastSport: { sport: 'pickleball', intensity: 'casual', minutes: 60 }
     }
   };
@@ -256,6 +258,19 @@ let state = loadState();
 
 // If there's an in-progress workout, always land on the Train tab so it's not missed.
 if (state.activeWorkoutDraft) state.ui.activeTab = 'train';
+
+// Ask the browser not to evict our storage. Fire and forget, never blocks render.
+// null = unknown or unsupported, true = kept, false = may be cleared.
+let storagePersisted = null;
+(function requestPersistentStorage() {
+  const sm = navigator.storage;
+  if (!sm || !sm.persisted) return;
+  const set = (v) => { if (storagePersisted !== v) { storagePersisted = v; if (typeof render === 'function') render(); } };
+  sm.persisted().then((p) => {
+    if (p || !sm.persist) return set(p);
+    return sm.persist().then(set);
+  }).catch(() => {});
+})();
 
 // Rest timer lives outside persisted state — it doesn't need to survive a reload.
 // Counts down to a fixed end time so it stays correct when the phone throttles a hidden tab.
@@ -1017,6 +1032,33 @@ function installDeclined() {
   try { return localStorage.getItem(INSTALL_DECLINED) === '1'; } catch { return false; }
 }
 
+const BACKUP_MIN_ENTRIES = 10;
+const BACKUP_MIN_DAYS = 14;
+const BACKUP_SNOOZE_DAYS = 7;
+
+function unbackedEntries() {
+  const since = state.lastExportAt ? new Date(state.lastExportAt).getTime() : 0;
+  return trainedEntries().filter(e => e.date && new Date(e.date).getTime() > since);
+}
+
+function renderBackupCard() {
+  const snooze = state.ui.backupSnoozeUntil;
+  if (snooze && new Date(snooze).getTime() > Date.now()) return '';
+  const entries = unbackedEntries();
+  if (!entries.length) return '';
+  const oldest = Math.max(...entries.map(e => daysAgo(e.date)));
+  if (entries.length < BACKUP_MIN_ENTRIES && oldest < BACKUP_MIN_DAYS) return '';
+  return `
+    <div class="card">
+      <h3>Back up your log</h3>
+      <p class="muted">${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} since your last backup.</p>
+      <div class="row install-row">
+        <button class="btn primary" data-action="export-data">Back up</button>
+        <button class="btn" data-action="backup-later">Later</button>
+      </div>
+    </div>`;
+}
+
 function renderInstallCard() {
   if (!installEvent || installDeclined() || isStandalone()) return '';
   return `
@@ -1121,6 +1163,7 @@ function renderTrainTab() {
       <button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button>
     </div>
     ${renderInstallCard()}
+    ${renderBackupCard()}
     ${renderPetCard()}
     ${renderWeekCard()}
     ${renderNextUpCard(next)}
@@ -1873,6 +1916,8 @@ function renderSettingsTab() {
     <p class="set-label">Data</p>
     <div class="card set-card">
       <div class="set-row col"><span>Backup</span><span class="muted">Data lives only in this browser.</span>
+        <span class="muted">Last backup: ${state.lastExportAt ? relativeDay(state.lastExportAt) : 'Never'}</span>
+        ${storagePersisted === null ? '' : `<span class="muted">Storage: ${storagePersisted ? 'kept' : 'may be cleared by the browser'}</span>`}
         <div class="row set-pair">
           <button class="btn" data-action="export-data">Export</button>
           <button class="btn" data-action="import-data">Import</button>
@@ -1966,6 +2011,9 @@ function handleCancelWorkout() {
 
 function exportData() {
   const stamp = new Date().toISOString().slice(0, 10);
+  state.lastExportAt = new Date().toISOString();
+  saveState();
+  render();
   downloadJson(`beban-book-backup-${stamp}.json`, state);
 }
 
@@ -2899,6 +2947,11 @@ document.addEventListener('click', (e) => {
     }
     case 'export-data':
       exportData();
+      break;
+    case 'backup-later':
+      state.ui.backupSnoozeUntil = new Date(Date.now() + BACKUP_SNOOZE_DAYS * 86400000).toISOString();
+      saveState();
+      render();
       break;
     case 'import-data':
       document.getElementById('import-file-input').click();
