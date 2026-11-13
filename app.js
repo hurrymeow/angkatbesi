@@ -225,6 +225,7 @@ function defaultState() {
       expandedHistoryIds: [],
       historyViewMode: 'sessions',
       historyExerciseFilter: '',
+      historyMetric: 'top',
       backupSnoozeUntil: null,
       lastSport: { sport: 'pickleball', intensity: 'casual', minutes: 60 }
     }
@@ -323,14 +324,11 @@ function lastLoggedSets(exerciseId, name) {
 }
 
 function allKnownExerciseNames() {
-  const names = new Set();
-  for (const s of state.routine.sessions) {
-    for (const e of s.exercises) names.add(e.name.trim());
-  }
-  for (const h of state.history) {
-    for (const e of h.exercises) names.add(e.name.trim());
-  }
-  return Array.from(names).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const byKey = new Map();
+  const add = (n) => { const k = exerciseKey(n); if (k && !byKey.has(k)) byKey.set(k, String(n).trim()); };
+  for (const s of state.routine.sessions) for (const e of s.exercises) add(e.name);
+  for (const h of state.history) for (const e of h.exercises) add(e.name);
+  return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
 }
 
 // ---------- Progress & stats (all derived from history, nothing extra stored) ----------
@@ -375,13 +373,39 @@ function progressionFor(ex) {
   return { weights, last, next: last == null ? null : roundWeight(last + inc), up: inc > 0 && last != null };
 }
 
+// One key for matching exercise names everywhere: trimmed, case-folded.
+function exerciseKey(name) {
+  return String(name == null ? '' : name).trim().toLowerCase();
+}
+
+// Per-session metrics for the By Exercise charts.
+function e1rmOf(sets) {
+  let best = null;
+  for (const s of sets) {
+    if (!s.completed || !isNum(s.weight) || !isNum(s.reps)) continue;
+    const w = Number(s.weight), r = Number(s.reps);
+    if (w <= 0 || r < 1 || r > 10) continue;
+    const v = w * (1 + r / 30);
+    if (best == null || v > best) best = v;
+  }
+  return best == null ? null : Math.round(best * 10) / 10;
+}
+
+function volumeOf(sets) {
+  let v = 0;
+  for (const s of sets) {
+    if (s.completed && isNum(s.reps) && isNum(s.weight)) v += Number(s.reps) * Number(s.weight);
+  }
+  return v > 0 ? Math.round(v * 10) / 10 : null;
+}
+
 // Best completed weight for an exercise name across history, or null if none.
 function bestDoneWeight(name) {
-  const key = String(name).trim().toLowerCase();
+  const key = exerciseKey(name);
   let best = null;
   for (const h of state.history) {
     for (const ex of h.exercises) {
-      if (ex.name.trim().toLowerCase() !== key) continue;
+      if (exerciseKey(ex.name) !== key) continue;
       const t = topWeight(ex.sets);
       if (t != null && (best == null || t > best)) best = t;
     }
@@ -424,7 +448,7 @@ function prsByEntry() {
     const entry = state.history[i];
     const prs = [];
     for (const ex of entry.exercises) {
-      const key = ex.name.trim().toLowerCase();
+      const key = exerciseKey(ex.name);
       const top = topWeight(ex.sets);
       if (top == null) continue;
       if (best.has(key) && top > best.get(key)) prs.push({ name: ex.name, weight: top, gain: roundWeight(top - best.get(key)) });
@@ -1607,6 +1631,7 @@ function renderSheet() {
     case 'pet': body = renderPetSheet(); break;
     case 'sport': body = renderSportSheet(); break;
     case 'edit-entry': body = renderEditEntrySheet(); break;
+    case 'rename-exercise': body = renderRenameSheet(); break;
   }
   const anim = sheetAnimate ? ' sheet-enter' : '';
   sheetAnimate = false;
@@ -1751,6 +1776,51 @@ function openEditEntry(entry) {
   openSheet({ kind: 'edit-entry', entryId: entry.id, draft });
 }
 
+function renameCounts(oldKey, newKey) {
+  let sessions = 0, routine = 0;
+  for (const h of state.history) if (h.exercises.some(e => exerciseKey(e.name) === oldKey)) sessions++;
+  for (const r of state.routine.sessions) routine += r.exercises.filter(e => exerciseKey(e.name) === oldKey).length;
+  const draft = state.activeWorkoutDraft && state.activeWorkoutDraft.exercises.some(e => exerciseKey(e.name) === oldKey);
+  return { sessions, routine, draft: !!draft };
+}
+
+function renameTarget() {
+  const nv = String(sheet.value || '').trim();
+  const nk = exerciseKey(nv);
+  if (!nk) return null;
+  const other = allKnownExerciseNames().find(n => exerciseKey(n) === nk && nk !== sheet.oldKey);
+  return { name: other || nv, merge: !!other, same: nk === sheet.oldKey && nv === sheet.oldName };
+}
+
+function renderRenameSheet() {
+  const t = renameTarget();
+  const c = renameCounts(sheet.oldKey, t ? exerciseKey(t.name) : '');
+  const label = t && t.merge ? `Merge into ${escapeHtml(t.name)}` : 'Rename';
+  return `
+    <h2>Rename ${escapeHtml(sheet.oldName)}</h2>
+    <label class="field-label" for="rename-input">New name</label>
+    <input type="text" id="rename-input" data-field="rename-value" value="${escapeHtml(sheet.value)}" maxlength="80" autocomplete="off">
+    <p class="muted mt-2">${t && !t.same ? `Updates ${c.sessions} logged session${c.sessions === 1 ? '' : 's'} and ${c.routine} routine exercise${c.routine === 1 ? '' : 's'}${c.draft ? ', plus the workout in progress' : ''}.` : 'Type a new name.'}</p>
+    <div class="row between mt-4">
+      <button class="btn ghost" data-action="close-sheet">Cancel</button>
+      <button class="btn primary" data-action="rename-save" ${t && !t.same ? '' : 'disabled'}>${label}</button>
+    </div>
+  `;
+}
+
+function saveRename() {
+  const t = renameTarget();
+  if (!t || t.same) return;
+  const ok = (e) => exerciseKey(e.name) === sheet.oldKey;
+  for (const h of state.history) for (const e of h.exercises) if (ok(e)) e.name = t.name;
+  for (const r of state.routine.sessions) for (const e of r.exercises) if (ok(e)) e.name = t.name;
+  if (state.activeWorkoutDraft) for (const e of state.activeWorkoutDraft.exercises) if (ok(e)) e.name = t.name;
+  state.ui.historyExerciseFilter = t.name;
+  saveState();
+  closeSheet();
+  showToast(t.merge ? `Merged into ${t.name}` : 'Renamed');
+}
+
 function renderEditEntrySheet() {
   const entry = state.history.find(h => h.id === sheet.entryId);
   if (!entry) return '';
@@ -1875,16 +1945,21 @@ function renderHistoryTab() {
 
   if (mode === 'exercise') {
     const names = allKnownExerciseNames();
-    const selected = names.includes(state.ui.historyExerciseFilter) ? state.ui.historyExerciseFilter : (names[0] || '');
+    const fk = exerciseKey(state.ui.historyExerciseFilter);
+    const selected = names.find(n => exerciseKey(n) === fk) || names[0] || '';
+    const selKey = exerciseKey(selected);
+    const metric = ['top', 'e1rm', 'volume'].includes(state.ui.historyMetric) ? state.ui.historyMetric : 'top';
     const prs = prsByEntry();
     const rows = [];
     // oldest first, so progression reads top-to-bottom
     for (let i = state.history.length - 1; i >= 0; i--) {
       const entry = state.history[i];
-      const ex = entry.exercises.find(e => e.name === selected);
-      if (ex) rows.push({ date: entry.date, sets: ex.sets, top: topWeight(ex.sets), pr: (prs.get(entry.id) || []).some(p => p.name === ex.name) });
+      const ex = entry.exercises.find(e => exerciseKey(e.name) === selKey);
+      if (ex) rows.push({ date: entry.date, sets: ex.sets, top: topWeight(ex.sets), e1rm: e1rmOf(ex.sets), volume: volumeOf(ex.sets), pr: (prs.get(entry.id) || []).some(p => exerciseKey(p.name) === selKey) });
     }
-    const tops = rows.map(r => r.top).filter(t => t != null);
+    const tops = rows.map(r => r[metric === 'top' ? 'top' : metric]).filter(t => t != null);
+    const metricLabel = metric === 'top' ? unitLabel() : metric === 'e1rm' ? `e1RM ${unitLabel()}` : `volume ${unitLabel()}`;
+    const fmt = (v) => metric === 'volume' ? formatVolume(v) : v;
     return `
       <div class="top-bar"><h1>History</h1><button class="icon-btn gear-btn" data-action="open-settings" aria-label="Settings">${icon('gear')}</button></div>
       ${toggle}
@@ -1893,16 +1968,24 @@ function renderHistoryTab() {
         <select id="exercise-filter">
           ${names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')}
         </select>
+        ${selected ? '<button class="btn small ghost mt-2" data-action="rename-exercise">Rename</button>' : ''}
       </div>
+      ${rows.length ? `
+        <div class="tabs-toggle">
+          <button class="${metric === 'top' ? 'active' : ''}" data-action="history-metric" data-metric="top">Top weight</button>
+          <button class="${metric === 'e1rm' ? 'active' : ''}" data-action="history-metric" data-metric="e1rm">e1RM</button>
+          <button class="${metric === 'volume' ? 'active' : ''}" data-action="history-metric" data-metric="volume">Volume</button>
+        </div>` : ''}
       ${tops.length ? `
         <div class="card">
           <div class="stat-grid flat">
-            <div class="stat"><span class="stat-value">${Math.max(...tops)}</span><span class="stat-label">best ${unitLabel()}</span></div>
-            <div class="stat"><span class="stat-value">${tops[tops.length - 1]}</span><span class="stat-label">latest ${unitLabel()}</span></div>
+            <div class="stat"><span class="stat-value">${fmt(Math.max(...tops))}</span><span class="stat-label">best ${metricLabel}</span></div>
+            <div class="stat"><span class="stat-value">${fmt(tops[tops.length - 1])}</span><span class="stat-label">latest ${metricLabel}</span></div>
             <div class="stat"><span class="stat-value">${rows.length}</span><span class="stat-label">sessions</span></div>
           </div>
           ${sparkline(tops)}
         </div>` : ''}
+      ${rows.length && !tops.length ? '<p class="muted">Nothing to chart for this metric yet.</p>' : ''}
       ${rows.length === 0 ? '<p class="muted">No logged sets for this exercise yet.</p>' : rows.map(r => `
         <div class="card">
           <div class="row between"><p class="muted">${formatDate(r.date)}</p>${r.pr ? '<span class="pill success">PR</span>' : ''}</div>
@@ -2985,6 +3068,21 @@ document.addEventListener('click', (e) => {
     case 'sport-save':
       saveSport();
       break;
+    case 'history-metric':
+      state.ui.historyMetric = target.dataset.metric;
+      saveState();
+      render();
+      break;
+    case 'rename-exercise': {
+      const names = allKnownExerciseNames();
+      const k = exerciseKey(state.ui.historyExerciseFilter);
+      const cur = names.find(n => exerciseKey(n) === k) || names[0];
+      if (cur) openSheet({ kind: 'rename-exercise', oldName: cur, oldKey: exerciseKey(cur), value: cur });
+      break;
+    }
+    case 'rename-save':
+      if (sheet && sheet.kind === 'rename-exercise') saveRename();
+      break;
     case 'history-view': {
       state.ui.historyViewMode = target.dataset.mode;
       saveState();
@@ -3102,6 +3200,18 @@ document.addEventListener('input', (e) => {
   const exerciseId = e.target.dataset.exerciseId;
   const setIndex = e.target.dataset.setIndex != null ? Number(e.target.dataset.setIndex) : null;
 
+  if (field === 'rename-value') {
+    if (sheet && sheet.kind === 'rename-exercise') {
+      sheet.value = e.target.value;
+      const t = renameTarget();
+      const btn = document.querySelector('[data-action="rename-save"]');
+      if (btn) { btn.disabled = !t || t.same; btn.textContent = t && t.merge ? `Merge into ${t.name}` : 'Rename'; }
+      const c = renameCounts(sheet.oldKey, '');
+      const note = document.querySelector('.sheet p.muted');
+      if (note) note.textContent = t && !t.same ? `Updates ${c.sessions} logged session${c.sessions === 1 ? '' : 's'} and ${c.routine} routine exercise${c.routine === 1 ? '' : 's'}${c.draft ? ', plus the workout in progress' : ''}.` : 'Type a new name.';
+    }
+    return;
+  }
   if (field.startsWith('edit-')) {
     const st = sheet && sheet.kind === 'edit-entry' && sheet.draft[Number(e.target.dataset.ei)]?.sets[Number(e.target.dataset.si)];
     if (!st) return;
